@@ -5,6 +5,8 @@ import pygame as pg
 import pygame.gfxdraw
 import numpy as np
 import sys, math
+import subprocess
+
 
 SCREEEN_WIDTH = 1080
 SCREEEN_HEIGHT = 1080
@@ -16,15 +18,44 @@ def get_exp_function(start_value, end_value, start_def, end_def):
     return lambda x: math.exp((x - start_def) * scale * math.log(end_value) + (1 - (x - start_def) * scale) * math.log(start_value))
 
 
+class FfmpegVideoWriter:
+    def __init__(self, filename, width, height, fps, input_pixfmt='rgba', video_filter=None):
+        args = [
+            'ffmpeg',
+            '-f', 'rawvideo',
+            '-pixel_format', input_pixfmt,
+            '-video_size', '{}x{}'.format(width, height),
+            '-framerate', '{}'.format(fps),
+            '-i', '-',
+        ]
+        if video_filter is not None:
+            args += [
+                '-filter:v', video_filter,
+            ]
+        args += [
+            '-vc', 'libx264',
+            '-crf', '20',
+            '-y',
+            filename
+        ]
+        self.p = subprocess.Popen(args, stdin=subprocess.PIPE)
+
+    def encode_image(self, img):
+        self.p.stdin.write(img)
+
+    def close(self):
+        self.p.terminate()
+
+
 class Screen(object):
-    def __init__(self, width, height, state, filename_prefix=None):
+    def __init__(self, width, height, state, filename=None):
         ''':param state: a SOMState object
-           :param filename_prefix: relative path and filename prefix for screen capture images. use None to skips screen capturing.'''
+           :param filename: video filename (optional)'''
         self.width = width
         self.height = height
         self.state = state
         self.frame = 1
-        self.filename_prefix = filename_prefix
+        self.filename = filename
 
         # init pygame
         pg.init()
@@ -35,6 +66,9 @@ class Screen(object):
         self.col_bg = pg.Color(25, 27, 25)
         self.col_city = pg.Color(255, 255, 255)
         self.col_path = pg.Color(216, 151, 31)
+
+        if self.filename is not None:
+            self.video_writer = FfmpegVideoWriter(filename, width, height, 30, 'bgra')
 
     def draw_aaline(self, color, startpos, endpos, width):
         '''draws an anti-aliased line with given width'''
@@ -82,8 +116,8 @@ class Screen(object):
                 pg.gfxdraw.filled_circle(self.surface, x, y, 5, self.col_city)
 
             # video
-            if self.filename_prefix:
-                img = pg.image.save(self.surface, self.filename_prefix + '%04i.png' % self.frame)
+            if self.filename is not None:
+                self.video_writer.encode_image(self.surface.get_buffer().raw)
 
             pg.display.flip()
             clock.tick(30)  # limit to 30 fps
@@ -95,6 +129,8 @@ class Screen(object):
                     self.state = self.state.next_state
                 else:
                     break
+
+        self.video_writer.close()
 
 
 class SOMState(object):
@@ -183,6 +219,7 @@ def get_halves_cities(width, height, n):
 
 
 if __name__ == '__main__':
+    # build test cases
     np.random.seed(124)
     cities_g1 = get_grid_cities(SCREEEN_WIDTH, SCREEEN_HEIGHT, 3, 3)
     cities_g2 = get_grid_cities(SCREEEN_WIDTH, SCREEEN_HEIGHT, 4, 4)
@@ -194,6 +231,7 @@ if __name__ == '__main__':
     cities_k2 = get_cluster_cities(SCREEEN_WIDTH, SCREEEN_HEIGHT, 9, ((266, 266), (SCREEEN_WIDTH - 266, 266), (SCREEEN_WIDTH / 2., SCREEEN_HEIGHT - 266)))
     cities_h1 = get_halves_cities(SCREEEN_WIDTH, SCREEEN_HEIGHT, 15)
 
+    # test case sequence
     state = SOMState(150, cities_g1,
             SOMState(150, cities_c1,
             SOMState(150, cities_h1,
@@ -204,6 +242,6 @@ if __name__ == '__main__':
             SOMState(150, cities_k2,
             SOMState(150, cities_u2)))))))))
 
-    # screen = Screen(SCREEEN_WIDTH, SCREEEN_HEIGHT, state, 'img/frame')  # screen capture mode
+    # screen = Screen(SCREEEN_WIDTH, SCREEEN_HEIGHT, state, 'som-tsp.mp4')  # video mode
     screen = Screen(SCREEEN_WIDTH, SCREEEN_HEIGHT, state)
     screen.run()
